@@ -1,16 +1,12 @@
 package com.chat.controller;
 
-import com.chat.model.MessageModel;
+import com.chat.model.Message;
 import com.chat.view.ClientUI;
 
-import javax.imageio.ImageIO;
 import javax.sound.sampled.*;
 import javax.swing.*;
-import java.awt.image.BufferedImage;
 import java.io.*;
 import java.net.Socket;
-import java.sql.Timestamp;
-import java.util.Date;
 
 public class ClientController {
 
@@ -18,51 +14,45 @@ public class ClientController {
     private Socket socket;
     private ObjectInputStream in;
     private ObjectOutputStream out;
+    private String username;
 
     public ClientController(ClientUI ui) {
         this.ui = ui;
-        connectToServer();
     }
 
-    private void connectToServer() {
+    public void connectToServer(String username) {
+        this.username = username;
         try {
-            socket = new Socket("localhost", 4789);
+            socket = new Socket("localhost", 12345);
             out = new ObjectOutputStream(socket.getOutputStream());
             out.flush();
             in = new ObjectInputStream(socket.getInputStream());
+
+            // Send username to server as the first message
+            out.writeObject(username);
+            out.flush();
 
             Thread receiveThread = new Thread(() -> {
                 try {
                     while (true) {
                         Object obj = in.readObject();
-                        if (obj instanceof String) {
-                            String type = (String) obj;
-                            switch (type) {
-                                case "TEXT":
-                                    String msg = (String) in.readObject();
-                                    ui.appendMessage("Server: " + msg);
-
-                                    MessageModel receivedMsg = new MessageModel(1, 2, msg); // server to client
-                                    receivedMsg.setSend_at(new Timestamp(new Date().getTime()));
-                                    receivedMsg.setIs_read("no");
-                                    receivedMsg.sendMessage();
+                        if (obj instanceof Message) {
+                            Message receivedMessage = (Message) obj;
+                            switch (receivedMessage.getType()) {
+                                case TEXT:
+                                    ui.appendMessage(receivedMessage.getSender() + ": " + receivedMessage.getContent());
                                     break;
-
-                                case "AUDIO":
-                                    byte[] audioData = (byte[]) in.readObject();
-                                    ui.appendMessage("🔊 Received audio");
-                                    playAudio(audioData);
+                                case AUDIO:
+                                    ui.appendMessage(receivedMessage.getSender() + ": 🔊 Sent audio");
+                                    playAudio(receivedMessage.getFileData());
                                     break;
-
-                                case "IMAGE":
-                                    byte[] imageData = (byte[]) in.readObject();
-                                    ui.appendMessage("🖼️ Received image:");
-                                    ui.appendImage(imageData);
-                                    // يمكنك إضافة تخزين الصورة أو غيره هنا إذا أردت
+                                case IMAGE:
+                                    ui.appendMessage(receivedMessage.getSender() + ": 🖼️ Sent image:");
+                                    ui.appendImage(receivedMessage.getFileData(), receivedMessage.getSender());
                                     break;
-
-                                default:
-                                    ui.appendMessage("Unknown message type: " + type);
+                                case EMOJI:
+                                    ui.appendMessage(receivedMessage.getSender() + ": " + receivedMessage.getContent());
+                                    break;
                             }
                         }
                     }
@@ -77,19 +67,13 @@ public class ClientController {
         }
     }
 
-    public void sendMessage(String msg) {
+    public void sendMessage(String msg, String receiver) {
         try {
             if (out != null) {
-                out.writeObject("TEXT");
-                out.writeObject(msg);
+                Message message = new Message(username, receiver, msg, Message.MessageType.TEXT);
+                out.writeObject(message);
                 out.flush();
-
-                ui.appendMessage("Client: " + msg);
-
-                MessageModel sentMsg = new MessageModel(2, 1, msg); // client to server
-                sentMsg.setSend_at(new Timestamp(new Date().getTime()));
-                sentMsg.setIs_read("yes");
-                sentMsg.sendMessage();
+                ui.appendMessage("You to " + receiver + ": " + msg);
             } else {
                 ui.appendMessage("Not connected to server.");
             }
@@ -98,40 +82,20 @@ public class ClientController {
         }
     }
 
-    public void sendImage() {
-        // اختيار صورة وإرسالها للسيرفر
-        JFileChooser fileChooser = new JFileChooser();
-        int result = fileChooser.showOpenDialog(ui);
-        if (result == JFileChooser.APPROVE_OPTION) {
-            File imageFile = fileChooser.getSelectedFile();
-            try {
-                byte[] imageBytes = readFileToBytes(imageFile);
-                if (out != null) {
-                    out.writeObject("IMAGE");
-                    out.writeObject(imageBytes);
-                    out.flush();
-
-                    ui.appendMessage("Client: [Sent an image]");
-                }
-            } catch (Exception e) {
-                ui.appendMessage("Error sending image: " + e.getMessage());
+    public void sendImage(byte[] imageBytes, String receiver) {
+        try {
+            if (out != null) {
+                Message message = new Message(username, receiver, imageBytes, Message.MessageType.IMAGE);
+                out.writeObject(message);
+                out.flush();
+                ui.appendMessage("You to " + receiver + ": [Sent an image]");
             }
+        } catch (Exception e) {
+            ui.appendMessage("Error sending image: " + e.getMessage());
         }
     }
 
-    private byte[] readFileToBytes(File file) throws IOException {
-        try (ByteArrayOutputStream baos = new ByteArrayOutputStream();
-             FileInputStream fis = new FileInputStream(file)) {
-            byte[] buffer = new byte[4096];
-            int n;
-            while ((n = fis.read(buffer)) != -1) {
-                baos.write(buffer, 0, n);
-            }
-            return baos.toByteArray();
-        }
-    }
-
-    public void recordAndSendAudio() {
+    public void recordAndSendAudio(String receiver) {
         new Thread(() -> {
             TargetDataLine microphone = null;
             try {
@@ -149,7 +113,7 @@ public class ClientController {
 
                 ByteArrayOutputStream baos = new ByteArrayOutputStream();
                 byte[] buffer = new byte[4096];
-                long endTime = System.currentTimeMillis() + 5000; // 5 ثوان تسجيل
+                long endTime = System.currentTimeMillis() + 5000; // 5 seconds recording
 
                 while (System.currentTimeMillis() < endTime) {
                     int bytesRead = microphone.read(buffer, 0, buffer.length);
@@ -164,8 +128,8 @@ public class ClientController {
                 byte[] audioBytes = baos.toByteArray();
 
                 if (out != null) {
-                    out.writeObject("AUDIO");
-                    out.writeObject(audioBytes);
+                    Message message = new Message(username, receiver, audioBytes, Message.MessageType.AUDIO);
+                    out.writeObject(message);
                     out.flush();
                 }
             } catch (Exception e) {
@@ -197,3 +161,5 @@ public class ClientController {
         }
     }
 }
+
+

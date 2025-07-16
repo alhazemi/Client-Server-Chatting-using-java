@@ -8,6 +8,7 @@ import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import javax.imageio.ImageIO;
+import java.io.File;
 
 public class ClientUI extends JFrame {
 
@@ -17,6 +18,8 @@ public class ClientUI extends JFrame {
     private JButton emojiButton;
     private JButton recordButton;
     private JButton imageButton;
+    private JTextField usernameField;
+    private JTextField receiverField;
 
     private JDialog emojiDialog;
     private ClientController controller;
@@ -30,25 +33,33 @@ public class ClientUI extends JFrame {
 
     public ClientUI() {
         setTitle("Client Chat");
-        setSize(520, 550); // تكبير عرض الفورم
+        setSize(520, 550);
         setDefaultCloseOperation(EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
         setLayout(new BorderLayout(10, 10));
 
-        // العنوان العلوي
-        JLabel label = new JLabel("CLIENT CHAT", SwingConstants.CENTER);
-        label.setFont(new Font("Arial", Font.BOLD, 22));
-        label.setBorder(BorderFactory.createEmptyBorder(10, 0, 10, 0));
-        add(label, BorderLayout.NORTH);
+        // Top Panel for Username and Receiver
+        JPanel topPanel = new JPanel(new GridLayout(2, 2, 5, 5));
+        topPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 5, 10));
 
-        // منطقة المحادثة
+        topPanel.add(new JLabel("Your Username:"));
+        usernameField = new JTextField();
+        topPanel.add(usernameField);
+
+        topPanel.add(new JLabel("Receiver Username:"));
+        receiverField = new JTextField();
+        topPanel.add(receiverField);
+
+        add(topPanel, BorderLayout.NORTH);
+
+        // Chat Area
         chatArea = new JTextPane();
         chatArea.setEditable(false);
         chatArea.setContentType("text/html");
         JScrollPane scrollPane = new JScrollPane(chatArea);
         add(scrollPane, BorderLayout.CENTER);
 
-        // أسفل الشاشة (الرسالة + الأزرار)
+        // Input Panel (Message + Buttons)
         JPanel inputPanel = new JPanel(new BorderLayout(5, 5));
         messageArea = new JTextArea(3, 30);
         messageArea.setLineWrap(true);
@@ -56,38 +67,54 @@ public class ClientUI extends JFrame {
         JScrollPane msgScroll = new JScrollPane(messageArea);
         inputPanel.add(msgScroll, BorderLayout.CENTER);
 
-        // إعدادات حجم الأزرار
+        // Button size settings
         Dimension btnSize = new Dimension(60, 35);
 
-        // زر الإيموجي
+        // Emoji button
         emojiButton = new JButton("😊");
         emojiButton.setFont(new Font("Segoe UI Symbol", Font.PLAIN, 18));
-        
         emojiButton.setBackground(Color.YELLOW);
         emojiButton.setFocusPainted(false);
         emojiButton.setPreferredSize(btnSize);
-        emojiButton.addActionListener(e -> showEmojiPanel());
+        emojiButton.addActionListener(e -> {
+            String emoji = showEmojiPanel();
+            if (emoji != null) {
+                messageArea.append(emoji);
+            }
+        });
 
-        // زر الصورة
+        // Image button
         imageButton = new JButton("📷");
-         imageButton.setFont(new Font("Segoe UI Symbol", Font.PLAIN, 18));
+        imageButton.setFont(new Font("Segoe UI Symbol", Font.PLAIN, 18));
         imageButton.setBackground(Color.PINK);
         imageButton.setFocusPainted(false);
         imageButton.setPreferredSize(btnSize);
-        imageButton.addActionListener(e -> controller.sendImage());
+        imageButton.addActionListener(e -> {
+            JFileChooser chooser = new JFileChooser();
+            int option = chooser.showOpenDialog(this);
+            if (option == JFileChooser.APPROVE_OPTION) {
+                try {
+                    File selectedFile = chooser.getSelectedFile();
+                    byte[] imageBytes = java.nio.file.Files.readAllBytes(selectedFile.toPath());
+                    controller.sendImage(imageBytes, receiverField.getText());
+                } catch (Exception ex) {
+                    appendMessage("Error reading image file: " + ex.getMessage());
+                }
+            }
+        });
 
-        // زر التسجيل الصوتي
+        // Record button
         recordButton = new JButton("🎙️");
         recordButton.setFont(new Font("Segoe UI Symbol", Font.PLAIN, 18));
         recordButton.setBackground(Color.GREEN.darker());
         recordButton.setForeground(Color.WHITE);
         recordButton.setFocusPainted(false);
         recordButton.setPreferredSize(btnSize);
-        recordButton.addActionListener(e -> controller.recordAndSendAudio());
+        recordButton.addActionListener(e -> controller.recordAndSendAudio(receiverField.getText()));
 
-        // زر الإرسال
-       sendButton = new JButton("➤"); // زر الإرسال على شكل سهم أنيق
-        sendButton.setFont(new Font("Segoe UI Symbol", Font.PLAIN, 18));// 
+        // Send button
+        sendButton = new JButton("➤");
+        sendButton.setFont(new Font("Segoe UI Symbol", Font.PLAIN, 18));
         sendButton.setBackground(new Color(0, 122, 255));
         sendButton.setForeground(Color.WHITE);
         sendButton.setFocusPainted(false);
@@ -95,12 +122,12 @@ public class ClientUI extends JFrame {
         sendButton.addActionListener(e -> {
             String msg = messageArea.getText().trim();
             if (!msg.isEmpty()) {
-                controller.sendMessage(msg);
+                controller.sendMessage(msg, receiverField.getText());
                 messageArea.setText("");
             }
         });
 
-        // ترتيب الأزرار في صف واحد
+        // Arrange buttons in a row
         JPanel buttonPanel = new JPanel(new GridLayout(1, 4, 5, 5));
         buttonPanel.add(emojiButton);
         buttonPanel.add(imageButton);
@@ -111,38 +138,48 @@ public class ClientUI extends JFrame {
         add(inputPanel, BorderLayout.SOUTH);
 
         controller = new ClientController(this);
+
+        // Add action listener to username field to connect to server
+        usernameField.addActionListener(e -> {
+            String username = usernameField.getText().trim();
+            if (!username.isEmpty()) {
+                controller.connectToServer(username);
+                usernameField.setEditable(false); // Disable editing after connecting
+            }
+        });
+
         setVisible(true);
     }
 
-    // نافذة اختيار الإيموجي
-    private void showEmojiPanel() {
-        if (emojiDialog == null) {
-            emojiDialog = new JDialog(this, false);
-            emojiDialog.setUndecorated(true);
-            emojiDialog.setSize(300, 300);
-            emojiDialog.setLocationRelativeTo(emojiButton);
+    // Emoji selection window
+    private String showEmojiPanel() {
+        JDialog emojiDialog = new JDialog(this, "Select Emoji", true);
+        emojiDialog.setUndecorated(true);
+        emojiDialog.setSize(300, 300);
+        emojiDialog.setLocationRelativeTo(emojiButton);
 
-            JPanel panel = new JPanel(new GridLayout(5, 8, 4, 4));
-            panel.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
+        JPanel panel = new JPanel(new GridLayout(5, 8, 4, 4));
+        panel.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
 
-            for (String emoji : emojis) {
-                JButton btn = new JButton(emoji);
-                btn.setFont(new Font("Segoe UI Emoji", Font.PLAIN, 18));
-                btn.setMargin(new Insets(2, 2, 2, 2));
-                btn.addActionListener(e -> {
-                    messageArea.append(emoji);
-                    emojiDialog.setVisible(false);
-                });
-                panel.add(btn);
-            }
+        final String[] selectedEmoji = {null};
 
-            emojiDialog.add(new JScrollPane(panel));
+        for (String emoji : emojis) {
+            JButton btn = new JButton(emoji);
+            btn.setFont(new Font("Segoe UI Emoji", Font.PLAIN, 18));
+            btn.setMargin(new Insets(2, 2, 2, 2));
+            btn.addActionListener(e -> {
+                selectedEmoji[0] = emoji;
+                emojiDialog.dispose();
+            });
+            panel.add(btn);
         }
 
+        emojiDialog.add(new JScrollPane(panel));
         emojiDialog.setVisible(true);
+        return selectedEmoji[0];
     }
 
-    // عرض رسالة نصية في منطقة الدردشة
+    // Display text message in chat area
     public void appendMessage(String msg) {
         try {
             StyledDocument doc = chatArea.getStyledDocument();
@@ -153,8 +190,8 @@ public class ClientUI extends JFrame {
         }
     }
 
-    // عرض صورة في منطقة الدردشة
-    public void appendImage(byte[] imageBytes) {
+    // Display image in chat area
+    public void appendImage(byte[] imageBytes, String sender) {
         try {
             BufferedImage img = ImageIO.read(new ByteArrayInputStream(imageBytes));
             if (img != null) {
@@ -162,6 +199,7 @@ public class ClientUI extends JFrame {
                 ImageIcon icon = new ImageIcon(scaledImg);
 
                 StyledDocument doc = chatArea.getStyledDocument();
+                doc.insertString(doc.getLength(), sender + ": ", null);
                 Style style = chatArea.addStyle("ImageStyle", null);
                 StyleConstants.setIcon(style, icon);
 
@@ -180,3 +218,5 @@ public class ClientUI extends JFrame {
         SwingUtilities.invokeLater(() -> new ClientUI().setVisible(true));
     }
 }
+
+
